@@ -4,5 +4,10 @@ subscriber_tcp
 broker_udp
 publisher_udp
 subscriber_udp
+broker_quic
+publisher_quic
+subscriber_quic
 *.o
 *.pcap
+cert.pem
+key.pem
