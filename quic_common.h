@@ -1,20 +1,13 @@
-/*
- * quic_common.h
- * Constantes propias de la version QUIC del sistema (ademas de las
- * definidas en common.h, que se siguen usando para los tamanos del
- * protocolo de aplicacion: SUB:<tema> / MSG:<tema>:<texto>).
- *
- * QUIC exige TLS 1.3 y negociacion de ALPN (Application-Layer Protocol
- * Negotiation) como parte del handshake; por eso el broker necesita un
- * certificado propio y ambas partes deben coincidir en el identificador
- * de protocolo de aplicacion.
- */
+/* constantes extra para la version QUIC (los tamanos del protocolo
+ * siguen saliendo de common.h). QUIC obliga a hacer handshake TLS 1.3
+ * con negociacion de ALPN, asi que el broker necesita certificado y
+ * cliente/servidor deben coincidir en el identificador de protocolo */
 
 #ifndef QUIC_COMMON_H
 #define QUIC_COMMON_H
 
-#define QUIC_ALPN_PROTO "pubsub-quic/1"
-#define QUIC_CERT_FILE  "cert.pem"
-#define QUIC_KEY_FILE   "key.pem"
+#define QUIC_ALPN_PROTO    "pubsub-quic/1"
+#define QUIC_ARCHIVO_CERT  "cert.pem"
+#define QUIC_ARCHIVO_CLAVE "key.pem"
 
 #endif

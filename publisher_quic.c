@@ -1,12 +1,8 @@
-/*
- * publisher_quic.c
- * BONO: publicador (periodista deportivo) que envia eventos de un
- * partido al broker usando QUIC. Abre una conexion QUIC contra el
- * broker (con su handshake TLS 1.3 incluido) y luego escribe cada
- * evento sobre el stream bidireccional por defecto de esa conexion,
- * exactamente igual que publisher_tcp.c escribe sobre su socket.
+/* bono: mismo publisher pero sobre QUIC. abre la conexion (con su
+ * handshake TLS 1.3 de por medio) y despues escribe cada evento sobre
+ * el stream por defecto, igual que publisher_tcp.c escribe en su socket.
  *
- * Uso: ./publisher_quic <ip_broker> <puerto> <tema> [num_mensajes]
+ * uso: ./publisher_quic <ip_broker> <puerto> <tema> [num_mensajes]
  */
 
 #include <stdio.h>
@@ -24,7 +20,7 @@
 #include "common.h"
 #include "quic_common.h"
 
-static const char *events[] = {
+static const char *eventos[] = {
     "Gol de Equipo A al minuto %d",
     "Gol de Equipo B al minuto %d",
     "Cambio: jugador 10 entra por jugador 20",
@@ -36,16 +32,16 @@ static const char *events[] = {
     "Doble cambio en Equipo A",
     "Final del primer tiempo"
 };
-#define N_EVENTS (int)(sizeof(events) / sizeof(events[0]))
+#define N_EVENTOS (int)(sizeof(eventos) / sizeof(eventos[0]))
 
-static unsigned char alpn_wire[64];
-static unsigned int alpn_wire_len;
+static unsigned char buf_alpn[64];
+static unsigned int len_alpn;
 
-static void build_alpn_wire(void) {
+static void armar_alpn(void) {
     size_t plen = strlen(QUIC_ALPN_PROTO);
-    alpn_wire[0] = (unsigned char)plen;
-    memcpy(alpn_wire + 1, QUIC_ALPN_PROTO, plen);
-    alpn_wire_len = (unsigned int)(plen + 1);
+    buf_alpn[0] = (unsigned char)plen;
+    memcpy(buf_alpn + 1, QUIC_ALPN_PROTO, plen);
+    len_alpn = (unsigned int)(plen + 1);
 }
 
 int main(int argc, char *argv[]) {
@@ -53,43 +49,43 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Uso: %s <ip_broker> <puerto> <tema> [num_mensajes]\n", argv[0]);
         exit(1);
     }
-    const char *server_ip = argv[1];
-    int port = atoi(argv[2]);
-    const char *topic = argv[3];
-    int num_messages = (argc >= 5) ? atoi(argv[4]) : 10;
+    const char *ip_remota = argv[1];
+    int puerto = atoi(argv[2]);
+    const char *tema = argv[3];
+    int num_mensajes = (argc >= 5) ? atoi(argv[4]) : 10;
 
-    build_alpn_wire();
+    armar_alpn();
 
     SSL_CTX *ctx = SSL_CTX_new(OSSL_QUIC_client_method());
     if (!ctx) { ERR_print_errors_fp(stderr); exit(1); }
-    SSL_CTX_set_alpn_protos(ctx, alpn_wire, alpn_wire_len);
-    /* el broker usa un certificado autofirmado hecho para este
-     * laboratorio, asi que no hay una CA real contra la cual validarlo */
+    SSL_CTX_set_alpn_protos(ctx, buf_alpn, len_alpn);
+    // el cert del broker es autofirmado (es de laboratorio, no hay CA real
+    // detras), asi que no tiene caso validar la cadena de confianza
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) { perror("socket"); exit(1); }
-    fcntl(fd, F_SETFL, O_NONBLOCK); /* QUIC de OpenSSL administra la E/S internamente */
+    fcntl(fd, F_SETFL, O_NONBLOCK); // OpenSSL maneja la E/S de QUIC por su cuenta
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        fprintf(stderr, "Direccion IP invalida: %s\n", server_ip);
+    struct sockaddr_in dir_remota;
+    memset(&dir_remota, 0, sizeof(dir_remota));
+    dir_remota.sin_family = AF_INET;
+    dir_remota.sin_port = htons(puerto);
+    if (inet_pton(AF_INET, ip_remota, &dir_remota.sin_addr) <= 0) {
+        fprintf(stderr, "Direccion IP invalida: %s\n", ip_remota);
         exit(1);
     }
-    if (connect(fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(fd, (struct sockaddr *)&dir_remota, sizeof(dir_remota)) < 0) {
         perror("connect"); exit(1);
     }
 
-    BIO_ADDR *peer = BIO_ADDR_new();
-    BIO_ADDR_rawmake(peer, AF_INET, &server_addr.sin_addr, sizeof(server_addr.sin_addr),
-                      server_addr.sin_port);
+    BIO_ADDR *par = BIO_ADDR_new();
+    BIO_ADDR_rawmake(par, AF_INET, &dir_remota.sin_addr, sizeof(dir_remota.sin_addr),
+                      dir_remota.sin_port);
 
     SSL *ssl = SSL_new(ctx);
     SSL_set_fd(ssl, fd);
-    SSL_set1_initial_peer_addr(ssl, peer);
+    SSL_set1_initial_peer_addr(ssl, par);
     SSL_set1_host(ssl, "localhost");
     SSL_set_blocking_mode(ssl, 1);
 
@@ -99,35 +95,35 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     printf("[publisher] conexion QUIC establecida con %s:%d, publicando en tema '%s'\n",
-           server_ip, port, topic);
+           ip_remota, puerto, tema);
 
-    int minute = 1;
-    for (int i = 0; i < num_messages; i++) {
-        char text[TEXT_MAX];
-        int idx = i % N_EVENTS;
-        if (strchr(events[idx], '%') != NULL)
-            snprintf(text, sizeof(text), events[idx], minute);
+    int minuto = 1;
+    for (int i = 0; i < num_mensajes; i++) {
+        char texto[TEXTO_MAX];
+        int idx = i % N_EVENTOS;
+        if (strchr(eventos[idx], '%') != NULL)
+            snprintf(texto, sizeof(texto), eventos[idx], minuto);
         else
-            snprintf(text, sizeof(text), "%s", events[idx]);
+            snprintf(texto, sizeof(texto), "%s", eventos[idx]);
 
-        char line[BUFFER_SIZE];
-        int len = snprintf(line, sizeof(line), "MSG:%s:%s\n", topic, text);
+        char linea[TAM_BUFER];
+        int len = snprintf(linea, sizeof(linea), "MSG:%s:%s\n", tema, texto);
 
-        size_t written = 0;
-        if (SSL_write_ex(ssl, line, (size_t)len, &written) <= 0) {
+        size_t escritos = 0;
+        if (SSL_write_ex(ssl, linea, (size_t)len, &escritos) <= 0) {
             fprintf(stderr, "[publisher] fallo el envio\n");
             ERR_print_errors_fp(stderr);
             break;
         }
-        printf("[publisher] enviado: %s", line);
+        printf("[publisher] enviado: %s", linea);
 
-        minute += 2 + (i % 3);
+        minuto += 2 + (i % 3);
         sleep(1);
     }
 
     SSL_shutdown(ssl);
     SSL_free(ssl);
-    BIO_ADDR_free(peer);
+    BIO_ADDR_free(par);
     close(fd);
     return 0;
 }

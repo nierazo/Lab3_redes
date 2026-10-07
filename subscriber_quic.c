@@ -1,11 +1,8 @@
-/*
- * subscriber_quic.c
- * BONO: suscriptor (hincha) que se conecta al broker por QUIC, envia
- * un SUB:<tema> por cada partido de interes sobre el stream por
- * defecto de la conexion, y despues queda leyendo en bucle las
- * actualizaciones que el broker le reenvia.
+/* bono: mismo subscriber pero sobre QUIC. manda un SUB:<tema> por
+ * cada partido de interes sobre el stream por defecto de la conexion,
+ * y se queda leyendo en bucle lo que el broker le vaya reenviando.
  *
- * Uso: ./subscriber_quic <ip_broker> <puerto> <tema1> [tema2 ...]
+ * uso: ./subscriber_quic <ip_broker> <puerto> <tema1> [tema2 ...]
  */
 
 #include <stdio.h>
@@ -23,14 +20,14 @@
 #include "common.h"
 #include "quic_common.h"
 
-static unsigned char alpn_wire[64];
-static unsigned int alpn_wire_len;
+static unsigned char buf_alpn[64];
+static unsigned int len_alpn;
 
-static void build_alpn_wire(void) {
+static void armar_alpn(void) {
     size_t plen = strlen(QUIC_ALPN_PROTO);
-    alpn_wire[0] = (unsigned char)plen;
-    memcpy(alpn_wire + 1, QUIC_ALPN_PROTO, plen);
-    alpn_wire_len = (unsigned int)(plen + 1);
+    buf_alpn[0] = (unsigned char)plen;
+    memcpy(buf_alpn + 1, QUIC_ALPN_PROTO, plen);
+    len_alpn = (unsigned int)(plen + 1);
 }
 
 int main(int argc, char *argv[]) {
@@ -40,39 +37,39 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Uso: %s <ip_broker> <puerto> <tema1> [tema2 ...]\n", argv[0]);
         exit(1);
     }
-    const char *server_ip = argv[1];
-    int port = atoi(argv[2]);
+    const char *ip_remota = argv[1];
+    int puerto = atoi(argv[2]);
 
-    build_alpn_wire();
+    armar_alpn();
 
     SSL_CTX *ctx = SSL_CTX_new(OSSL_QUIC_client_method());
     if (!ctx) { ERR_print_errors_fp(stderr); exit(1); }
-    SSL_CTX_set_alpn_protos(ctx, alpn_wire, alpn_wire_len);
+    SSL_CTX_set_alpn_protos(ctx, buf_alpn, len_alpn);
     SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) { perror("socket"); exit(1); }
     fcntl(fd, F_SETFL, O_NONBLOCK);
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        fprintf(stderr, "Direccion IP invalida: %s\n", server_ip);
+    struct sockaddr_in dir_remota;
+    memset(&dir_remota, 0, sizeof(dir_remota));
+    dir_remota.sin_family = AF_INET;
+    dir_remota.sin_port = htons(puerto);
+    if (inet_pton(AF_INET, ip_remota, &dir_remota.sin_addr) <= 0) {
+        fprintf(stderr, "Direccion IP invalida: %s\n", ip_remota);
         exit(1);
     }
-    if (connect(fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(fd, (struct sockaddr *)&dir_remota, sizeof(dir_remota)) < 0) {
         perror("connect"); exit(1);
     }
 
-    BIO_ADDR *peer = BIO_ADDR_new();
-    BIO_ADDR_rawmake(peer, AF_INET, &server_addr.sin_addr, sizeof(server_addr.sin_addr),
-                      server_addr.sin_port);
+    BIO_ADDR *par = BIO_ADDR_new();
+    BIO_ADDR_rawmake(par, AF_INET, &dir_remota.sin_addr, sizeof(dir_remota.sin_addr),
+                      dir_remota.sin_port);
 
     SSL *ssl = SSL_new(ctx);
     SSL_set_fd(ssl, fd);
-    SSL_set1_initial_peer_addr(ssl, peer);
+    SSL_set1_initial_peer_addr(ssl, par);
     SSL_set1_host(ssl, "localhost");
     SSL_set_blocking_mode(ssl, 1);
 
@@ -81,56 +78,55 @@ int main(int argc, char *argv[]) {
         ERR_print_errors_fp(stderr);
         exit(1);
     }
-    printf("[subscriber] conexion QUIC establecida con %s:%d\n", server_ip, port);
+    printf("[subscriber] conexion QUIC establecida con %s:%d\n", ip_remota, puerto);
 
     for (int i = 3; i < argc; i++) {
-        char line[BUFFER_SIZE];
-        int len = snprintf(line, sizeof(line), "SUB:%s\n", argv[i]);
-        size_t written = 0;
-        SSL_write_ex(ssl, line, (size_t)len, &written);
+        char linea[TAM_BUFER];
+        int len = snprintf(linea, sizeof(linea), "SUB:%s\n", argv[i]);
+        size_t escritos = 0;
+        SSL_write_ex(ssl, linea, (size_t)len, &escritos);
         printf("[subscriber] suscrito al tema '%s'\n", argv[i]);
     }
     printf("[subscriber] esperando actualizaciones...\n");
 
-    char inbuf[BUFFER_SIZE];
-    int inlen = 0;
+    char buf_rx[TAM_BUFER];
+    int len_rx = 0;
     while (1) {
-        int space = BUFFER_SIZE - inlen;
-        if (space <= 0) {
+        int espacio = TAM_BUFER - len_rx;
+        if (espacio <= 0) {
             fprintf(stderr, "[subscriber] linea recibida demasiado larga\n");
             break;
         }
         size_t n = 0;
-        if (SSL_read_ex(ssl, inbuf + inlen, space, &n) <= 0 || n == 0) {
+        if (SSL_read_ex(ssl, buf_rx + len_rx, espacio, &n) <= 0 || n == 0) {
             printf("[subscriber] el broker cerro la conexion\n");
             break;
         }
-        inlen += (int)n;
+        len_rx += (int)n;
 
-        /* un stream QUIC tambien es un flujo de bytes fiable y
-         * ordenado (como un socket TCP), por eso se ensamblan lineas
-         * de la misma forma que en subscriber_tcp.c */
-        char *start = inbuf;
+        // mismo truco que en subscriber_tcp.c: un stream QUIC tambien
+        // es un flujo de bytes fiable y en orden, no datagramas sueltos
+        char *inicio = buf_rx;
         char *nl;
-        while ((nl = memchr(start, '\n', inlen - (start - inbuf))) != NULL) {
+        while ((nl = memchr(inicio, '\n', len_rx - (inicio - buf_rx))) != NULL) {
             *nl = '\0';
-            if (strncmp(start, "MSG:", 4) == 0) {
-                char *topic = start + 4;
-                char *sep = strchr(topic, ':');
+            if (strncmp(inicio, "MSG:", 4) == 0) {
+                char *tema = inicio + 4;
+                char *sep = strchr(tema, ':');
                 if (sep != NULL) {
                     *sep = '\0';
-                    printf(">> [%s] %s\n", topic, sep + 1);
+                    printf(">> [%s] %s\n", tema, sep + 1);
                 }
             }
-            start = nl + 1;
+            inicio = nl + 1;
         }
-        int remaining = inlen - (start - inbuf);
-        memmove(inbuf, start, remaining);
-        inlen = remaining;
+        int restante = len_rx - (inicio - buf_rx);
+        memmove(buf_rx, inicio, restante);
+        len_rx = restante;
     }
 
     SSL_free(ssl);
-    BIO_ADDR_free(peer);
+    BIO_ADDR_free(par);
     close(fd);
     return 0;
 }

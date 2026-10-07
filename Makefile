@@ -3,9 +3,9 @@ CFLAGS = -Wall -Wextra -std=c99
 
 TARGETS = broker_tcp publisher_tcp subscriber_tcp broker_udp publisher_udp subscriber_udp
 
-# --- Bono: version QUIC (usa la implementacion de QUIC de OpenSSL >= 3.5) ---
-# No forma parte de "make all" a proposito: el entregable base (TCP/UDP)
-# no depende de tener OpenSSL con soporte QUIC instalado.
+# bono: version QUIC (usa el QUIC que trae OpenSSL >= 3.5).
+# queda fuera de "make all" a proposito, para que el entregable base
+# compile aunque no haya OpenSSL con soporte de QUIC instalado.
 QUIC_TARGETS = broker_quic publisher_quic subscriber_quic
 
 QUIC_PREFIX := $(shell pkg-config --exists openssl 2>/dev/null && pkg-config --variable=prefix openssl)

@@ -1,9 +1,7 @@
-/*
- * publisher_tcp.c
- * Publicador (periodista deportivo) que se conecta al broker por TCP
- * y envia una serie de eventos de un partido especifico (tema).
+/* publisher (periodista) que se conecta al broker por TCP y manda una
+ * serie de eventos de un partido (tema).
  *
- * Uso: ./publisher_tcp <ip_broker> <puerto> <tema> [num_mensajes]
+ * uso: ./publisher_tcp <ip_broker> <puerto> <tema> [num_mensajes]
  */
 
 #include <stdio.h>
@@ -14,7 +12,7 @@
 #include <sys/socket.h>
 #include "common.h"
 
-static const char *events[] = {
+static const char *eventos[] = {
     "Gol de Equipo A al minuto %d",
     "Gol de Equipo B al minuto %d",
     "Cambio: jugador 10 entra por jugador 20",
@@ -26,55 +24,55 @@ static const char *events[] = {
     "Doble cambio en Equipo A",
     "Final del primer tiempo"
 };
-#define N_EVENTS (int)(sizeof(events) / sizeof(events[0]))
+#define N_EVENTOS (int)(sizeof(eventos) / sizeof(eventos[0]))
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "Uso: %s <ip_broker> <puerto> <tema> [num_mensajes]\n", argv[0]);
         exit(1);
     }
-    const char *server_ip = argv[1];
-    int port = atoi(argv[2]);
-    const char *topic = argv[3];
-    int num_messages = (argc >= 5) ? atoi(argv[4]) : 10;
+    const char *ip_servidor = argv[1];
+    int puerto = atoi(argv[2]);
+    const char *tema = argv[3];
+    int num_mensajes = (argc >= 5) ? atoi(argv[4]) : 10;
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) { perror("socket"); exit(1); }
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        fprintf(stderr, "Direccion IP invalida: %s\n", server_ip);
+    struct sockaddr_in dir_servidor;
+    memset(&dir_servidor, 0, sizeof(dir_servidor));
+    dir_servidor.sin_family = AF_INET;
+    dir_servidor.sin_port = htons(puerto);
+    if (inet_pton(AF_INET, ip_servidor, &dir_servidor.sin_addr) <= 0) {
+        fprintf(stderr, "Direccion IP invalida: %s\n", ip_servidor);
         exit(1);
     }
 
-    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(sock, (struct sockaddr *)&dir_servidor, sizeof(dir_servidor)) < 0) {
         perror("connect"); exit(1);
     }
     printf("[publisher] conectado al broker %s:%d, publicando en tema '%s'\n",
-           server_ip, port, topic);
+           ip_servidor, puerto, tema);
 
-    int minute = 1;
-    for (int i = 0; i < num_messages; i++) {
-        char text[TEXT_MAX];
-        int idx = i % N_EVENTS;
-        if (strchr(events[idx], '%') != NULL)
-            snprintf(text, sizeof(text), events[idx], minute);
+    int minuto = 1;
+    for (int i = 0; i < num_mensajes; i++) {
+        char texto[TEXTO_MAX];
+        int idx = i % N_EVENTOS;
+        if (strchr(eventos[idx], '%') != NULL)
+            snprintf(texto, sizeof(texto), eventos[idx], minuto);
         else
-            snprintf(text, sizeof(text), "%s", events[idx]);
+            snprintf(texto, sizeof(texto), "%s", eventos[idx]);
 
-        char line[BUFFER_SIZE];
-        snprintf(line, sizeof(line), "MSG:%s:%s\n", topic, text);
+        char linea[TAM_BUFER];
+        snprintf(linea, sizeof(linea), "MSG:%s:%s\n", tema, texto);
 
-        if (send(sock, line, strlen(line), 0) < 0) {
+        if (send(sock, linea, strlen(linea), 0) < 0) {
             perror("send");
             break;
         }
-        printf("[publisher] enviado: %s", line);
+        printf("[publisher] enviado: %s", linea);
 
-        minute += 2 + (i % 3);
+        minuto += 2 + (i % 3);
         sleep(1);
     }
 

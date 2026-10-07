@@ -1,10 +1,7 @@
-/*
- * publisher_udp.c
- * Publicador (periodista deportivo) que envia eventos de un partido
- * al broker mediante datagramas UDP. No hay conexion previa: cada
- * mensaje se envia de forma independiente con sendto().
+/* publisher que manda eventos de un partido al broker por UDP. no hay
+ * conexion previa, cada mensaje sale independiente con sendto().
  *
- * Uso: ./publisher_udp <ip_broker> <puerto> <tema> [num_mensajes]
+ * uso: ./publisher_udp <ip_broker> <puerto> <tema> [num_mensajes]
  */
 
 #include <stdio.h>
@@ -15,7 +12,7 @@
 #include <sys/socket.h>
 #include "common.h"
 
-static const char *events[] = {
+static const char *eventos[] = {
     "Gol de Equipo A al minuto %d",
     "Gol de Equipo B al minuto %d",
     "Cambio: jugador 10 entra por jugador 20",
@@ -27,52 +24,52 @@ static const char *events[] = {
     "Doble cambio en Equipo A",
     "Final del primer tiempo"
 };
-#define N_EVENTS (int)(sizeof(events) / sizeof(events[0]))
+#define N_EVENTOS (int)(sizeof(eventos) / sizeof(eventos[0]))
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         fprintf(stderr, "Uso: %s <ip_broker> <puerto> <tema> [num_mensajes]\n", argv[0]);
         exit(1);
     }
-    const char *server_ip = argv[1];
-    int port = atoi(argv[2]);
-    const char *topic = argv[3];
-    int num_messages = (argc >= 5) ? atoi(argv[4]) : 10;
+    const char *ip_broker = argv[1];
+    int puerto = atoi(argv[2]);
+    const char *tema = argv[3];
+    int num_mensajes = (argc >= 5) ? atoi(argv[4]) : 10;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) { perror("socket"); exit(1); }
 
-    struct sockaddr_in broker_addr;
-    memset(&broker_addr, 0, sizeof(broker_addr));
-    broker_addr.sin_family = AF_INET;
-    broker_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, server_ip, &broker_addr.sin_addr) <= 0) {
-        fprintf(stderr, "Direccion IP invalida: %s\n", server_ip);
+    struct sockaddr_in dir_broker;
+    memset(&dir_broker, 0, sizeof(dir_broker));
+    dir_broker.sin_family = AF_INET;
+    dir_broker.sin_port = htons(puerto);
+    if (inet_pton(AF_INET, ip_broker, &dir_broker.sin_addr) <= 0) {
+        fprintf(stderr, "Direccion IP invalida: %s\n", ip_broker);
         exit(1);
     }
 
-    printf("[publisher] enviando al broker %s:%d, tema '%s'\n", server_ip, port, topic);
+    printf("[publisher] enviando al broker %s:%d, tema '%s'\n", ip_broker, puerto, tema);
 
-    int minute = 1;
-    for (int i = 0; i < num_messages; i++) {
-        char text[TEXT_MAX];
-        int idx = i % N_EVENTS;
-        if (strchr(events[idx], '%') != NULL)
-            snprintf(text, sizeof(text), events[idx], minute);
+    int minuto = 1;
+    for (int i = 0; i < num_mensajes; i++) {
+        char texto[TEXTO_MAX];
+        int idx = i % N_EVENTOS;
+        if (strchr(eventos[idx], '%') != NULL)
+            snprintf(texto, sizeof(texto), eventos[idx], minuto);
         else
-            snprintf(text, sizeof(text), "%s", events[idx]);
+            snprintf(texto, sizeof(texto), "%s", eventos[idx]);
 
-        char line[BUFFER_SIZE];
-        int len = snprintf(line, sizeof(line), "MSG:%s:%s", topic, text);
+        char linea[TAM_BUFER];
+        int len = snprintf(linea, sizeof(linea), "MSG:%s:%s", tema, texto);
 
-        if (sendto(sock, line, len, 0,
-                   (struct sockaddr *)&broker_addr, sizeof(broker_addr)) < 0) {
+        if (sendto(sock, linea, len, 0,
+                   (struct sockaddr *)&dir_broker, sizeof(dir_broker)) < 0) {
             perror("sendto");
             break;
         }
-        printf("[publisher] enviado: %s\n", line);
+        printf("[publisher] enviado: %s\n", linea);
 
-        minute += 2 + (i % 3);
+        minuto += 2 + (i % 3);
         sleep(1);
     }
 
