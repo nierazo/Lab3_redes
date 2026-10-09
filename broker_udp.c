@@ -1,9 +1,17 @@
-/* broker version UDP: aqui no hay conexiones, solo datagramas sueltos.
- * segun lo que traiga cada uno, se registra una direccion como
- * suscrita a un tema o se reenvia un mensaje a todas las direcciones
- * suscritas a ese tema.
+/*
+ * Broker de publicacion/suscripcion usando UDP.
  *
- * uso: ./broker_udp <puerto>
+ * A diferencia de la version TCP, aqui no hay conexiones: el broker
+ * recibe datagramas sueltos y, segun su contenido, registra una
+ * direccion como suscrita a un tema o reenvia un mensaje a todas
+ * las direcciones suscritas a ese tema.
+ *
+ * Comandos:
+ *   SUB:tema          Suscribirse a un tema
+ *   MSG:tema:mensaje  Publicar un mensaje
+ *
+ * Uso:
+ *   ./broker_udp <puerto>
  */
 
 #include <stdio.h>
@@ -13,104 +21,196 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+
 #include "common.h"
 
+
+/*
+ * Guarda la direccion de origen de cada cliente junto con el tema
+ * al que se suscribio. Un cliente puede tener varias suscripciones.
+ */
 typedef struct {
-    struct sockaddr_in dir;
+    struct sockaddr_in direccion;
     char tema[TEMA_MAX];
 } suscripcion_t;
 
-static suscripcion_t subs[MAX_SUBS];
-static int n_subs = 0;
+static suscripcion_t suscripciones[MAX_SUBS];
+static int num_suscripciones = 0;
 
+
+/* Compara dos direcciones IP:puerto para saber si son la misma. */
 static int misma_direccion(const struct sockaddr_in *a, const struct sockaddr_in *b) {
-    return a->sin_addr.s_addr == b->sin_addr.s_addr && a->sin_port == b->sin_port;
+    return a->sin_addr.s_addr == b->sin_addr.s_addr
+        && a->sin_port == b->sin_port;
 }
 
-static void agregar_suscripcion(const struct sockaddr_in *dir, const char *tema) {
-    for (int i = 0; i < n_subs; i++) {
-        if (misma_direccion(&subs[i].dir, dir) && strcmp(subs[i].tema, tema) == 0) {
-            return; // ya estaba suscrita esta direccion a este tema, nada que hacer
+
+/*
+ * Agrega una suscripcion a la lista compartida, si no estaba ya
+ * registrada (un cliente puede mandar el mismo SUB mas de una vez).
+ */
+static void agregar_suscripcion(const struct sockaddr_in *direccion, const char *tema) {
+    for (int i = 0; i < num_suscripciones; i++) {
+        if (misma_direccion(&suscripciones[i].direccion, direccion)
+            && strcmp(suscripciones[i].tema, tema) == 0) {
+            return;
         }
     }
-    if (n_subs >= MAX_SUBS) {
+
+    if (num_suscripciones >= MAX_SUBS) {
         fprintf(stderr, "[broker] tabla de suscripciones llena\n");
         return;
     }
-    subs[n_subs].dir = *dir;
-    strncpy(subs[n_subs].tema, tema, TEMA_MAX - 1);
-    subs[n_subs].tema[TEMA_MAX - 1] = '\0';
-    n_subs++;
-    printf("[broker] %s:%d suscrito al tema '%s'\n",
-           inet_ntoa(dir->sin_addr), ntohs(dir->sin_port), tema);
+
+    suscripcion_t *nueva = &suscripciones[num_suscripciones];
+
+    nueva->direccion = *direccion;
+    strncpy(nueva->tema, tema, TEMA_MAX - 1);
+    nueva->tema[TEMA_MAX - 1] = '\0';
+
+    num_suscripciones++;
+
+    printf(
+        "[broker] %s:%d suscrito al tema '%s'\n",
+        inet_ntoa(direccion->sin_addr),
+        ntohs(direccion->sin_port),
+        tema
+    );
 }
 
-static void reenviar_a_tema(int sock, const char *tema, const char *mensaje, int len_mensaje) {
-    int enviados = 0;
-    for (int i = 0; i < n_subs; i++) {
-        if (strcmp(subs[i].tema, tema) == 0) {
-            sendto(sock, mensaje, len_mensaje, 0,
-                   (struct sockaddr *)&subs[i].dir, sizeof(subs[i].dir));
-            enviados++;
+
+/* Reenvia un mensaje a todos los clientes suscritos al tema. */
+static void reenviar_mensaje(
+    int socket_udp,
+    const char *tema,
+    const char *mensaje,
+    int longitud_mensaje
+) {
+    int num_destinos = 0;
+
+    for (int i = 0; i < num_suscripciones; i++) {
+        if (strcmp(suscripciones[i].tema, tema) == 0) {
+            sendto(
+                socket_udp,
+                mensaje,
+                longitud_mensaje,
+                0,
+                (struct sockaddr *)&suscripciones[i].direccion,
+                sizeof(suscripciones[i].direccion)
+            );
+
+            num_destinos++;
         }
     }
-    printf("[broker] tema '%s': mensaje reenviado a %d suscriptor(es)\n", tema, enviados);
+
+    printf(
+        "[broker] tema '%s': mensaje enviado a %d suscriptor(es)\n",
+        tema,
+        num_destinos
+    );
 }
 
+
 int main(int argc, char *argv[]) {
-    setvbuf(stdout, NULL, _IOLBF, 0); // log sin buffering, para verlo en vivo
+    /*
+     * Hace que los mensajes de la consola se muestren por linea,
+     * algo util para seguir el log mientras el broker esta activo.
+     */
+    setvbuf(stdout, NULL, _IOLBF, 0);
 
     if (argc != 2) {
         fprintf(stderr, "Uso: %s <puerto>\n", argv[0]);
-        exit(1);
+        return 1;
     }
+
     int puerto = atoi(argv[1]);
 
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) { perror("socket"); exit(1); }
+    int socket_udp = socket(AF_INET, SOCK_DGRAM, 0);
 
-    struct sockaddr_in dir_local;
-    memset(&dir_local, 0, sizeof(dir_local));
-    dir_local.sin_family = AF_INET;
-    dir_local.sin_addr.s_addr = INADDR_ANY;
-    dir_local.sin_port = htons(puerto);
+    if (socket_udp < 0) {
+        perror("socket");
+        return 1;
+    }
 
-    if (bind(sock, (struct sockaddr *)&dir_local, sizeof(dir_local)) < 0) {
-        perror("bind"); exit(1);
+    struct sockaddr_in direccion_local;
+    memset(&direccion_local, 0, sizeof(direccion_local));
+
+    direccion_local.sin_family = AF_INET;
+    direccion_local.sin_addr.s_addr = htonl(INADDR_ANY);
+    direccion_local.sin_port = htons((unsigned short)puerto);
+
+    if (bind(
+            socket_udp,
+            (struct sockaddr *)&direccion_local,
+            sizeof(direccion_local)
+        ) < 0) {
+
+        perror("bind");
+        close(socket_udp);
+        return 1;
     }
 
     printf("[broker] escuchando en el puerto %d (UDP)\n", puerto);
 
     char datagrama[TAM_BUFER];
+
     while (1) {
-        struct sockaddr_in dir_remitente;
-        socklen_t len = sizeof(dir_remitente);
-        int n = recvfrom(sock, datagrama, TAM_BUFER - 1, 0,
-                          (struct sockaddr *)&dir_remitente, &len);
-        if (n <= 0) continue;
-        datagrama[n] = '\0';
+        struct sockaddr_in direccion_remitente;
+        socklen_t longitud = sizeof(direccion_remitente);
+
+        int bytes_leidos = recvfrom(
+            socket_udp,
+            datagrama,
+            TAM_BUFER - 1,
+            0,
+            (struct sockaddr *)&direccion_remitente,
+            &longitud
+        );
+
+        if (bytes_leidos <= 0) {
+            continue;
+        }
+
+        datagrama[bytes_leidos] = '\0';
 
         if (strncmp(datagrama, "SUB:", 4) == 0) {
-            agregar_suscripcion(&dir_remitente, datagrama + 4);
+            agregar_suscripcion(&direccion_remitente, datagrama + 4);
+
         } else if (strncmp(datagrama, "MSG:", 4) == 0) {
             char *inicio_tema = datagrama + 4;
-            char *sep = strchr(inicio_tema, ':');
-            if (sep == NULL) {
+            char *separador = strchr(inicio_tema, ':');
+
+            /*
+             * El primer ':' despues de MSG: separa el tema
+             * del contenido del mensaje.
+             */
+            if (separador == NULL) {
                 fprintf(stderr, "[broker] mensaje mal formado: %s\n", datagrama);
                 continue;
             }
-            int len_tema = sep - inicio_tema;
-            if (len_tema >= TEMA_MAX) len_tema = TEMA_MAX - 1;
-            char tema[TEMA_MAX];
-            memcpy(tema, inicio_tema, len_tema);
-            tema[len_tema] = '\0';
 
-            // se reenvia el datagrama tal cual llego, no se toca el contenido
-            reenviar_a_tema(sock, tema, datagrama, n);
+            int longitud_tema = (int)(separador - inicio_tema);
+
+            if (longitud_tema >= TEMA_MAX) {
+                longitud_tema = TEMA_MAX - 1;
+            }
+
+            char tema[TEMA_MAX];
+            memcpy(tema, inicio_tema, longitud_tema);
+            tema[longitud_tema] = '\0';
+
+            /*
+             * Se reenvia el datagrama tal cual llego, sin tocar
+             * el contenido del mensaje.
+             */
+            reenviar_mensaje(socket_udp, tema, datagrama, bytes_leidos);
+
         } else {
             fprintf(stderr, "[broker] comando desconocido: %s\n", datagrama);
         }
     }
+
+    close(socket_udp);
 
     return 0;
 }

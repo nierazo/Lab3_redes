@@ -1,7 +1,8 @@
 /* constantes extra para la version QUIC (los tamanos del protocolo
- * siguen saliendo de common.h). QUIC obliga a hacer handshake TLS 1.3
- * con negociacion de ALPN, asi que el broker necesita certificado y
- * cliente/servidor deben coincidir en el identificador de protocolo */
+ * siguen saliendo de common.h). QUIC siempre va cifrado con TLS 1.3 y
+ * negocia ALPN como parte del handshake, por eso el broker necesita
+ * certificado y cliente/servidor tienen que usar el mismo identificador
+ * de protocolo a la hora de negociar ALPN */
 
 #ifndef QUIC_COMMON_H
 #define QUIC_COMMON_H
